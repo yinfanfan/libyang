@@ -23,6 +23,56 @@ struct ly_in;
 struct lys_module;
 
 /**
+ * @page howtoSchemasParsers Parsing YANG Modules
+ *
+ * YANG module parsers allow to read YANG module from a specific format. libyang supports the following schema formats:
+ *
+ * - YANG
+ *
+ *   Basic YANG schemas format described in [RFC 6020](http://tools.ietf.org/html/rfc6020) and
+ *   [RFC 7951](http://tools.ietf.org/html/rfc7951) (so both YANG 1.0 and YANG 1.1 versions are supported).
+ *
+ * - YIN
+ *
+ *   Alternative XML-based format to YANG - YANG Independent Notation. The details can be found in
+ *   [RFC 6020](http://tools.ietf.org/html/rfc6020#section-11) and
+ *   [RFC 7951](http://tools.ietf.org/html/rfc7951#section-13).
+ *
+ * When the [context](@ref howtocontext) is created, it already contains the following schemas, which
+ * are implemented internally by libyang:
+ * - ietf-yang-metadata@2016-08-05
+ * - yang@2020-06-17
+ * - ietf-inet-types@2013-07-15
+ * - ietf-yang-types@2013-07-15
+ * - ietf-datastores@2018-02-14
+ * - ietf-yang-library@2019-01-04
+ *
+ * The `yang` schema is the libyang's internal module to provide namespace and definitions of for various YANG
+ * attributes described in [RFC 7951](https://tools.ietf.org/html/rfc6243) (such as `insert` attribute for
+ * edit-config's data).
+ *
+ * Other schemas can be added to the context manually with the functions listed below. Besides the schema parser functions,
+ * it is also possible to use ly_ctx_load_module() which tries to find the required schema automatically - using
+ * ::ly_module_imp_clb or automatic search in working directory and in the context's search directories.
+ *
+ * YANG modules are loaded in two steps. First, the input YANG/YIN data are parsed into \b lysp_* structures that reflect
+ * the structure of the input schema. Mostly just syntax checks are done, no reference or type checking is performed in
+ * this step. If the module is supposed to be implemented, not just imported by another module, the second step is to compile
+ * it. The compiled schema may significantly differ in structure from the source schema structure. All the references
+ * are resolved, groupings are instantiated, types are resolved (and compiled by grouping all the relevant restrictions
+ * when derived from another types) and many other syntactical checks are done.
+ *
+ * Functions List
+ * --------------
+ * - lys_parse_mem()
+ * - lys_parse_fd()
+ * - lys_parse_path()
+ * - lys_search_localfile()
+ * - ly_ctx_set_module_imp_clb()
+ * - ly_ctx_load_module()
+ */
+
+/**
  * @addtogroup schematree
  * @{
  */

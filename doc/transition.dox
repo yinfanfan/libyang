@@ -1,0 +1,37 @@
+/**
+ * @page transition Transition Manual (1.x -> 2.0)
+ * 
+ * [TOC]
+ * 
+ * @section transitionContext Context
+ * 
+ * ly_ctx_info() -> ly_ctx_get_yanglib_data()
+ *
+ * - nedoporucuje se menit context po zacatku prace s daty
+ *   - neni ly_ctx_set_module_data_clb() ani souvisejici callback
+ *
+ * 
+ * - ::ly_ctx_find_path() byla odebrana
+ *
+ * @subsection contextSearchpaths Search Paths
+ *
+ * Internally, search directories are still handled the same way. However, API to manipulate the search directories chenged.
+ * 
+ * ### Unchanged functions
+ * - ::ly_ctx_get_searchdirs()
+ * 
+ * ### Changed functions
+ * - ::ly_ctx_set_searchdir() - Return value was changed to ::LY_ERR.
+ * 
+ * ### Added functions
+ * - ::ly_ctx_unset_searchdir()
+ * - ::ly_ctx_unset_searchdir_last()
+ * 
+ * ### Removed functions
+ * - ly_ctx_unset_searchdirs() - Since the index is hard to work with, the function was replaced by ::ly_ctx_unset_searchdir() and
+ * ::ly_ctx_unset_searchdir_last().
+ * 
+ * @section transitionSchema Schema 
+ *
+ * lys_set_private() -> lysc_node_set_private()
+ */

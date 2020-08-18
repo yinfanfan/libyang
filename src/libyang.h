@@ -59,7 +59,7 @@ extern "C" {
  *
  * @section about-license License
  *
- * Copyright (c) 2015-2017 CESNET, z.s.p.o.
+ * Copyright (c) 2015-2020 CESNET, z.s.p.o.
  *
  * (The BSD 3-Clause License)
  *
@@ -80,15 +80,25 @@ extern "C" {
 /**
  * @page howto libyang API Overview
  *
- * - @subpage howtocontext
- * - @subpage howtoschemas
- * - @subpage howtodata
- * - @subpage howtoxpath
- * - @subpage howtoxml
- * - @subpage howtothreads
- * - @subpage howtologger
- * - @subpage howtoplugins
- * - @subpage howtostructures
+ * @section howtoGeneral General notes
+ *
+ * libyang is primarily intended for handling data modeled by YANG modeling language, so the library is supposed to be optimized
+ * for this purpose. However, as a side effect, the library has to be able precisely process YANG modules. Thus, it is usable by
+ * YANG module authors to validate their modules and schemas in the development process.
+ *
+ * The most of the API functions directly returns error code in the form of ::LY_ERR value. In addition, all the error arisen in
+ * connection with manipulation with the [context](@ref howtocontext), [YANG modules](@ref howtoschema) or [YANG data](@ref
+ * howtodata), are recorded into the context and can be examined for the more detailed information.
+ *
+ * - @subpage howtoContext
+ * - @subpage howtoSchemas
+ * - @subpage howtoData
+ * - @subpage howtoXpath
+ * - @subpage howtoXml
+ * - @subpage howtoThreads
+ * - @subpage howtoLogger
+ * - @subpage howtoPlugins
+ * - @subpage howtoStructures
  */
 
 /**
@@ -114,7 +124,7 @@ extern "C" {
  * The sized arrays must be carefully freed (which should be done anyway only internally), since pointers to the sized arrays used
  * in libyang structures, does not point to the beginning of the allocated space.
  *
- * - ::LY_ARRAY_SIZE
+ * - ::LY_ARRAY_COUNT
  * - ::LY_ARRAY_FOR
  *
  * @section struct_lists Lists
