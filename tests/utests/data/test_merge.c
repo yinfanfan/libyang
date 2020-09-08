@@ -12,71 +12,26 @@
  *     https://opensource.org/licenses/BSD-3-Clause
  */
 
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <setjmp.h>
-#include <cmocka.h>
 
-#include "libyang.h"
+#include "../macros.h"
 
-struct state {
-    struct ly_ctx *ctx;
-    struct lyd_node *source;
-    struct lyd_node *target;
-    struct lyd_node *result;
-};
 
-static int
-setup_dflt(void **state)
-{
-    struct state *st;
+#define MODEL_CREATE(INPUT, MODEL) MODEL_CREATE_PARAM(INPUT, LYD_XML, 0, LYD_VALIDATE_PRESENT, MODEL) 
 
-    (*state) = st = calloc(1, sizeof *st);
-    if (!st) {
-        fprintf(stderr, "Memory allocation error.\n");
-        return -1;
-    }
+#define CONTEXT_CREATE \
+                CONTEXT_CREATE_PATH(NULL);
 
-    /* libyang context */
-    if (ly_ctx_new(NULL, 0, &st->ctx)) {
-        fprintf(stderr, "Failed to create context.\n");
-        goto error;
-    }
-
-    return 0;
-
-error:
-    ly_ctx_destroy(st->ctx, NULL);
-    free(st);
-    (*state) = NULL;
-
-    return -1;
-}
-
-static int
-teardown_dflt(void **state)
-{
-    struct state *st = (*state);
-
-    lyd_free_siblings(st->target);
-    lyd_free_siblings(st->source);
-    lyd_free_siblings(st->result);
-    ly_ctx_destroy(st->ctx, NULL);
-    free(st);
-    (*state) = NULL;
-
-    return 0;
-}
+#define MODEL_CHECK_CHAR(MODEL, TEXT) \
+                MODEL_CHECK_CHAR_PARAM(MODEL, TEXT,  LYD_PRINT_WITHSIBLINGS | LYD_PRINT_SHRINK);
 
 static void
 test_batch(void **state)
 {
-    struct state *st = (*state);
-    uint32_t i;
-    char *str;
-
+    
+    (void) state;
     const char *start =
     "<modules-state xmlns=\"urn:ietf:params:xml:ns:yang:ietf-yang-library\">"
         "<module>"
@@ -231,32 +186,25 @@ test_batch(void **state)
             "<conformance-type>implement</conformance-type>"
         "</module>"
     "</modules-state>";
-    struct ly_in *in = NULL;
 
-    assert_int_equal(LY_SUCCESS, ly_in_new_memory(start, &in));
-    assert_int_equal(LY_SUCCESS, lyd_parse_data(st->ctx, in, LYD_XML, LYD_PARSE_ONLY, 0, &st->target));
-    assert_non_null(st->target);
+    CONTEXT_CREATE;
+    MODEL_CREATE_PARAM(start, LYD_XML, LYD_PARSE_ONLY, 0, target)
 
-    for (i = 0; i < 11; ++i) {
-        ly_in_memory(in, data[i]);
-        assert_int_equal(LY_SUCCESS, lyd_parse_data(st->ctx, in, LYD_XML, LYD_PARSE_ONLY, 0, &st->source));
-        assert_non_null(st->source);
-
-        assert_int_equal(LY_SUCCESS, lyd_merge_siblings(&st->target, st->source, LYD_MERGE_DESTRUCT));
-        st->source = NULL;
+    for (int32_t i = 0; i < 11; ++i) {
+        MODEL_CREATE_PARAM(data[i], LYD_XML, LYD_PARSE_ONLY, 0, source)
+        assert_int_equal(LY_SUCCESS, lyd_merge_siblings(&target, source, LYD_MERGE_DESTRUCT));
     }
 
-    lyd_print_mem(&str, st->target, LYD_XML, LYD_PRINT_SHRINK);
-    assert_string_equal(str, output_template);
+    MODEL_CHECK_CHAR(target, output_template);
 
-    ly_in_free(in, 0);
-    free(str);
+    MODEL_DESTROY(target);
+    CONTEXT_DESTROY;
 }
 
 static void
 test_leaf(void **state)
 {
-    struct state *st = (*state);
+    (void) state; 
     const char *sch = "module x {"
                     "  namespace urn:x;"
                     "  prefix x;"
@@ -270,30 +218,29 @@ test_leaf(void **state)
     const char *trg = "<A xmlns=\"urn:x\"> <f1>block</f1> </A>";
     const char *src = "<A xmlns=\"urn:x\"> <f1>aa</f1> <B> <f2>bb</f2> </B> </A>";
     const char *result = "<A xmlns=\"urn:x\"><f1>aa</f1><B><f2>bb</f2></B></A>";
-    char *printed = NULL;
 
-    assert_int_equal(LY_SUCCESS, lys_parse_mem(st->ctx, sch, LYS_IN_YANG, NULL));
+    CONTEXT_CREATE;
+    assert_int_equal(LY_SUCCESS, lys_parse_mem(CONTEXT_GET, sch, LYS_IN_YANG, NULL));
 
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, src, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->source));
-    assert_non_null(st->source);
-
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, trg, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->target));
-    assert_non_null(st->target);
+    MODEL_CREATE(src, source); //source
+    MODEL_CREATE(trg, target); //target
 
     /* merge them */
-    assert_int_equal(lyd_merge_siblings(&st->target, st->source, 0), LY_SUCCESS);
-    assert_int_equal(lyd_validate_all(&st->target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+    assert_int_equal(lyd_merge_siblings(&target, source, 0), LY_SUCCESS);
+    assert_int_equal(lyd_validate_all(&target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
 
     /* check the result */
-    lyd_print_mem(&printed, st->target, LYD_XML, LYD_PRINT_WITHSIBLINGS | LYD_PRINT_SHRINK);
-    assert_string_equal(printed, result);
-    free(printed);
+    MODEL_CHECK_CHAR(target, result);
+
+    MODEL_DESTROY(target);
+    MODEL_DESTROY(source);
+    CONTEXT_DESTROY;
 }
 
 static void
 test_container(void **state)
 {
-    struct state *st = (*state);
+    (void) state;
     const char *sch =
         "module A {"
             "namespace \"aa:A\";"
@@ -312,30 +259,30 @@ test_container(void **state)
     const char *trg = "<A xmlns=\"aa:A\"> <B> <f2>aaa</f2> </B> </A>";
     const char *src = "<A xmlns=\"aa:A\"> <C> <f3>bbb</f3> </C> </A>";
     const char *result = "<A xmlns=\"aa:A\"><B><f2>aaa</f2></B><C><f3>bbb</f3></C></A>";
-    char *printed = NULL;
 
-    assert_int_equal(LY_SUCCESS, lys_parse_mem(st->ctx, sch, LYS_IN_YANG, NULL));
-
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, src, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->source));
-    assert_non_null(st->source);
-
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, trg, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->target));
-    assert_non_null(st->target);
+    CONTEXT_CREATE;
+    assert_int_equal(LY_SUCCESS, lys_parse_mem(CONTEXT_GET, sch, LYS_IN_YANG, NULL));
+    
+    MODEL_CREATE(src, source);
+    MODEL_CREATE(trg, target);
 
     /* merge them */
-    assert_int_equal(lyd_merge_siblings(&st->target, st->source, 0), LY_SUCCESS);
-    assert_int_equal(lyd_validate_all(&st->target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+    assert_int_equal(lyd_merge_siblings(&target, source, 0), LY_SUCCESS);
+    assert_int_equal(lyd_validate_all(&target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
 
     /* check the result */
-    lyd_print_mem(&printed, st->target, LYD_XML, LYD_PRINT_WITHSIBLINGS | LYD_PRINT_SHRINK);
-    assert_string_equal(printed, result);
-    free(printed);
+    MODEL_CHECK_CHAR(target, result);
+
+    /* destroy */
+    MODEL_DESTROY(source);
+    MODEL_DESTROY(target);
+    CONTEXT_DESTROY;
 }
 
 static void
 test_list(void **state)
 {
-    struct state *st = (*state);
+    (void) state;
     const char *sch =
     "module merge {"
         "namespace \"http://test/merge\";"
@@ -382,30 +329,29 @@ test_list(void **state)
             "<p3>true</p3>"
         "</b-list1>"
     "</inner1>";
-    char *printed = NULL;
 
-    assert_int_equal(LY_SUCCESS, lys_parse_mem(st->ctx, sch, LYS_IN_YANG, NULL));
+    CONTEXT_CREATE;
+    assert_int_equal(LY_SUCCESS, lys_parse_mem(CONTEXT_GET, sch, LYS_IN_YANG, NULL));
 
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, src, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->source));
-    assert_non_null(st->source);
-
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, trg, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->target));
-    assert_non_null(st->target);
+    MODEL_CREATE(src, source);
+    MODEL_CREATE(trg, target);
 
     /* merge them */
-    assert_int_equal(lyd_merge_siblings(&st->target, st->source, 0), LY_SUCCESS);
-    assert_int_equal(lyd_validate_all(&st->target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+    assert_int_equal(lyd_merge_siblings(&target, source, 0), LY_SUCCESS);
+    assert_int_equal(lyd_validate_all(&target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
 
     /* check the result */
-    lyd_print_mem(&printed, st->target, LYD_XML, LYD_PRINT_WITHSIBLINGS | LYD_PRINT_SHRINK);
-    assert_string_equal(printed, result);
-    free(printed);
+    MODEL_CHECK_CHAR(target, result);
+
+    MODEL_DESTROY(target);
+    MODEL_DESTROY(source);
+    CONTEXT_DESTROY;
 }
 
 static void
 test_list2(void **state)
 {
-    struct state *st = (*state);
+    (void) state;
     const char *sch =
     "module merge {"
         "namespace \"http://test/merge\";"
@@ -461,30 +407,29 @@ test_list2(void **state)
             "</inner2>"
         "</b-list1>"
     "</inner1>";
-    char *printed = NULL;
 
-    assert_int_equal(LY_SUCCESS, lys_parse_mem(st->ctx, sch, LYS_IN_YANG, NULL));
+    CONTEXT_CREATE;
+    assert_int_equal(LY_SUCCESS, lys_parse_mem(CONTEXT_GET, sch, LYS_IN_YANG, NULL));
 
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, src, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->source));
-    assert_non_null(st->source);
-
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, trg, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->target));
-    assert_non_null(st->target);
+    MODEL_CREATE(src, source);
+    MODEL_CREATE(trg, target);
 
     /* merge them */
-    assert_int_equal(lyd_merge_siblings(&st->target, st->source, 0), LY_SUCCESS);
-    assert_int_equal(lyd_validate_all(&st->target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+    assert_int_equal(lyd_merge_siblings(&target, source, 0), LY_SUCCESS);
+    assert_int_equal(lyd_validate_all(&target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
 
     /* check the result */
-    lyd_print_mem(&printed, st->target, LYD_XML, LYD_PRINT_WITHSIBLINGS | LYD_PRINT_SHRINK);
-    assert_string_equal(printed, result);
-    free(printed);
+    MODEL_CHECK_CHAR(target, result);
+    
+    MODEL_DESTROY(source);
+    MODEL_DESTROY(target);
+    CONTEXT_DESTROY;
 }
 
 static void
 test_case(void **state)
 {
-    struct state *st = (*state);
+    (void) state;
     const char *sch =
     "module merge {"
         "namespace \"http://test/merge\";"
@@ -519,30 +464,29 @@ test_case(void **state)
     "<cont xmlns=\"http://test/merge\">"
         "<p1>1</p1>"
     "</cont>";
-    char *printed = NULL;
 
-    assert_int_equal(LY_SUCCESS, lys_parse_mem(st->ctx, sch, LYS_IN_YANG, NULL));
-
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, src, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->source));
-    assert_non_null(st->source);
-
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, trg, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->target));
-    assert_non_null(st->target);
+    CONTEXT_CREATE;
+    assert_int_equal(LY_SUCCESS, lys_parse_mem(CONTEXT_GET, sch, LYS_IN_YANG, NULL));
+    
+    MODEL_CREATE(src, source);
+    MODEL_CREATE(trg, target);
 
     /* merge them */
-    assert_int_equal(lyd_merge_siblings(&st->target, st->source, 0), LY_SUCCESS);
-    assert_int_equal(lyd_validate_all(&st->target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+    assert_int_equal(lyd_merge_siblings(&target, source, 0), LY_SUCCESS);
+    assert_int_equal(lyd_validate_all(&target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
 
     /* check the result */
-    lyd_print_mem(&printed, st->target, LYD_XML, LYD_PRINT_WITHSIBLINGS | LYD_PRINT_SHRINK);
-    assert_string_equal(printed, result);
-    free(printed);
+    MODEL_CHECK_CHAR(target, result);
+
+    MODEL_DESTROY(source);
+    MODEL_DESTROY(target);
+    CONTEXT_DESTROY;
 }
 
 static void
 test_dflt(void **state)
 {
-    struct state *st = (*state);
+    (void) state;
     const char *sch =
     "module merge-dflt {"
         "namespace \"urn:merge-dflt\";"
@@ -561,27 +505,35 @@ test_dflt(void **state)
         "}"
     "}";
 
-    assert_int_equal(LY_SUCCESS, lys_parse_mem(st->ctx, sch, LYS_IN_YANG, NULL));
+    CONTEXT_CREATE;
+    assert_int_equal(LY_SUCCESS, lys_parse_mem(CONTEXT_GET, sch, LYS_IN_YANG, NULL));
 
-    assert_int_equal(lyd_new_path(NULL, st->ctx, "/merge-dflt:top/c", "c_dflt", 0, &st->target), LY_SUCCESS);
-    assert_int_equal(lyd_validate_all(&(st->target), NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+    struct lyd_node *target = NULL;
+    struct lyd_node *source = NULL;
 
-    assert_int_equal(lyd_new_path(NULL, st->ctx, "/merge-dflt:top/a", "a_val", 0, &st->source), LY_SUCCESS);
-    assert_int_equal(lyd_new_path(st->source, st->ctx, "/merge-dflt:top/b", "b_val", 0, NULL), LY_SUCCESS);
-    assert_int_equal(lyd_validate_all(&(st->source), NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+    assert_int_equal(lyd_new_path(NULL, CONTEXT_GET, "/merge-dflt:top/c", "c_dflt", 0, &target), LY_SUCCESS);
+    assert_int_equal(lyd_validate_all(&target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
 
-    assert_int_equal(lyd_merge_siblings(&st->target, st->source, LYD_MERGE_DESTRUCT | LYD_MERGE_DEFAULTS), LY_SUCCESS);
-    st->source = NULL;
+    assert_int_equal(lyd_new_path(NULL, CONTEXT_GET, "/merge-dflt:top/a", "a_val", 0, &source), LY_SUCCESS);
+    assert_int_equal(lyd_new_path(source, CONTEXT_GET, "/merge-dflt:top/b", "b_val", 0, NULL), LY_SUCCESS);
+    assert_int_equal(lyd_validate_all(&source, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+
+    assert_int_equal(lyd_merge_siblings(&target, source, LYD_MERGE_DESTRUCT | LYD_MERGE_DEFAULTS), LY_SUCCESS);
+    source = NULL;
 
     /* c should be replaced and now be default */
-    assert_string_equal(lyd_node_children(st->target, 0)->prev->schema->name, "c");
-    assert_true(lyd_node_children(st->target, 0)->prev->flags & LYD_DEFAULT);
+    assert_string_equal(lyd_node_children(target, 0)->prev->schema->name, "c");
+    assert_true(lyd_node_children(target, 0)->prev->flags & LYD_DEFAULT);
+
+    MODEL_DESTROY(target);
+    MODEL_DESTROY(source);
+    CONTEXT_DESTROY;
 }
 
 static void
 test_dflt2(void **state)
 {
-    struct state *st = (*state);
+    (void) state;
     const char *sch =
     "module merge-dflt {"
         "namespace \"urn:merge-dflt\";"
@@ -600,25 +552,32 @@ test_dflt2(void **state)
         "}"
     "}";
 
-    assert_int_equal(LY_SUCCESS, lys_parse_mem(st->ctx, sch, LYS_IN_YANG, NULL));
+    CONTEXT_CREATE;
+    assert_int_equal(LY_SUCCESS, lys_parse_mem(CONTEXT_GET, sch, LYS_IN_YANG, NULL));
 
-    assert_int_equal(lyd_new_path(NULL, st->ctx, "/merge-dflt:top/c", "c_dflt", 0, &st->target), LY_SUCCESS);
-    assert_int_equal(lyd_validate_all(&(st->target), NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+    struct lyd_node * target;
+    struct lyd_node * source;
+    assert_int_equal(lyd_new_path(NULL, CONTEXT_GET, "/merge-dflt:top/c", "c_dflt", 0, &target), LY_SUCCESS);
+    assert_int_equal(lyd_validate_all(&target, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
 
-    assert_int_equal(lyd_new_path(NULL, st->ctx, "/merge-dflt:top/a", "a_val", 0, &st->source), LY_SUCCESS);
-    assert_int_equal(lyd_new_path(st->source, st->ctx, "/merge-dflt:top/b", "b_val", 0, NULL), LY_SUCCESS);
-    assert_int_equal(lyd_validate_all(&(st->source), NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
+    assert_int_equal(lyd_new_path(NULL, CONTEXT_GET, "/merge-dflt:top/a", "a_val", 0, &source), LY_SUCCESS);
+    assert_int_equal(lyd_new_path(source, CONTEXT_GET, "/merge-dflt:top/b", "b_val", 0, NULL), LY_SUCCESS);
+    assert_int_equal(lyd_validate_all(&source, NULL, LYD_VALIDATE_PRESENT, NULL), LY_SUCCESS);
 
-    assert_int_equal(lyd_merge_siblings(&st->target, st->source, 0), LY_SUCCESS);
+    assert_int_equal(lyd_merge_siblings(&target, source, 0), LY_SUCCESS);
 
     /* c should not be replaced, so c remains not default */
-    assert_false(lyd_node_children(st->target, 0)->flags & LYD_DEFAULT);
+    assert_false(lyd_node_children(target, 0)->flags & LYD_DEFAULT);
+
+    MODEL_DESTROY(target);
+    MODEL_DESTROY(source);
+    CONTEXT_DESTROY;  
 }
 
 static void
 test_leafrefs(void **state)
 {
-    struct state *st = (*state);
+    (void) state;
     const char *sch = "module x {"
                       "  namespace urn:x;"
                       "  prefix x;"
@@ -634,36 +593,36 @@ test_leafrefs(void **state)
     const char *res = "<l xmlns=\"urn:x\"><n>a</n><t>*</t></l>"
                       "<l xmlns=\"urn:x\"><n>b</n><r>a</r></l>"
                       "<l xmlns=\"urn:x\"><n>c</n><r>a</r></l>";
-    char *prt = NULL;
+    
+    CONTEXT_CREATE;
+    
+    assert_int_equal(LY_SUCCESS, lys_parse_mem(CONTEXT_GET, sch, LYS_IN_YANG, NULL));
 
-    assert_int_equal(LY_SUCCESS, lys_parse_mem(st->ctx, sch, LYS_IN_YANG, NULL));
+    MODEL_CREATE(src, source);
+    MODEL_CREATE(trg, target);
 
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, src, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->source));
-    assert_non_null(st->source);
+    assert_int_equal(lyd_merge_siblings(&target, source, 0), LY_SUCCESS);
 
-    assert_int_equal(LY_SUCCESS, lyd_parse_data_mem(st->ctx, trg, LYD_XML, 0, LYD_VALIDATE_PRESENT, &st->target));
-    assert_non_null(st->target);
+    MODEL_CHECK_CHAR(target, res);
 
-    assert_int_equal(lyd_merge_siblings(&st->target, st->source, 0), LY_SUCCESS);
-
-    lyd_print_mem(&prt, st->target, LYD_XML, LYD_PRINT_WITHSIBLINGS | LYD_PRINT_SHRINK);
-    assert_string_equal(prt, res);
-    free(prt);
+    MODEL_DESTROY(source);
+    MODEL_DESTROY(target);
+    CONTEXT_DESTROY;
 }
 
 int
 main(void)
 {
     const struct CMUnitTest tests[] = {
-        cmocka_unit_test_setup_teardown(test_batch, setup_dflt, teardown_dflt),
-        cmocka_unit_test_setup_teardown(test_leaf, setup_dflt, teardown_dflt),
-        cmocka_unit_test_setup_teardown(test_container, setup_dflt, teardown_dflt),
-        cmocka_unit_test_setup_teardown(test_list, setup_dflt, teardown_dflt),
-        cmocka_unit_test_setup_teardown(test_list2, setup_dflt, teardown_dflt),
-        cmocka_unit_test_setup_teardown(test_case, setup_dflt, teardown_dflt),
-        cmocka_unit_test_setup_teardown(test_dflt, setup_dflt, teardown_dflt),
-        cmocka_unit_test_setup_teardown(test_dflt2, setup_dflt, teardown_dflt),
-        cmocka_unit_test_setup_teardown(test_leafrefs, setup_dflt, teardown_dflt),
+        cmocka_unit_test(test_batch),
+        cmocka_unit_test(test_leaf),
+        cmocka_unit_test(test_container),
+        cmocka_unit_test(test_list),
+        cmocka_unit_test(test_list2),
+        cmocka_unit_test(test_case),
+        cmocka_unit_test(test_dflt),
+        cmocka_unit_test(test_dflt2),
+        cmocka_unit_test(test_leafrefs),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);
