@@ -57,6 +57,7 @@ typedef enum {
     LYS_OUT_YANG = 1,    /**< YANG schema output format */
     LYS_OUT_YANG_COMPILED = 2, /**< YANG schema output format of the compiled schema tree */
     LYS_OUT_YIN = 3,     /**< YIN schema output format */
+    LYS_OUTOPT_TREE_RFC = 4, /**< YANG Tree Diagrams. Conform to do RFC8340 */
 
     LYS_OUT_TREE,        /**< Tree schema output format, for more information see the [printers](@ref howtoschemasprinters) page */
 } LYS_OUTFORMAT;

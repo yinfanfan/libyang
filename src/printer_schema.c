@@ -63,10 +63,15 @@ lys_print_module(struct ly_out *out, const struct lys_module *module, LYS_OUTFOR
 
         ret = yin_print_parsed_module(out, module, module->parsed, options);
         break;
-    /* TODO not yet implemented
     case LYS_OUT_TREE:
-        ret = tree_print_model(out, module, target_node, line_length, options);
+        if (!module->parsed) {
+            LOGERR(module->ctx, LY_EINVAL, "Module \"%s\" parsed module missing.", module->name);
+            ret = LY_EINVAL;
+            break;
+        }
+        ret = tree_print_parsed_module(out, module, module->parsed, options);
         break;
+    /* TODO not yet implemented
     case LYS_OUT_INFO:
         ret = info_print_model(out, module, target_node);
         break;
@@ -98,10 +103,10 @@ lys_print_submodule(struct ly_out *out, const struct lys_module *module, const s
     case LYS_OUT_YIN:
         ret = yin_print_parsed_submodule(out, module, submodule, options);
         break;
-    /* TODO not yet implemented
     case LYS_OUT_TREE:
-        ret = tree_print_model(out, module, target_node, line_length, options);
+        ret = tree_print_parsed_submodule(out, module, submodule, options);
         break;
+    /* TODO not yet implemented
     case LYS_OUT_INFO:
         ret = info_print_model(out, module, target_node);
         break;
@@ -204,10 +209,10 @@ lys_print_node(struct ly_out *out, const struct lysc_node *node, LYS_OUTFORMAT f
     case LYS_OUT_YIN:
         ret = yin_print_parsed(out, module);
         break;
-    case LYS_OUT_TREE:
-        ret = tree_print_model(out, module, target_node, line_length, options);
-        break;
     */
+    case LYS_OUT_TREE:
+        ret = tree_print_compiled_node(out, node, options);
+        break;
     default:
         LOGERR(NULL, LY_EINVAL, "Unsupported output format.");
         ret = LY_EINVAL;

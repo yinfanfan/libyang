@@ -376,11 +376,11 @@ main_ni(int argc, char* argv[])
             } else if (!strcasecmp(optarg, "tree")) {
                 outformat_s = LYS_OUT_TREE;
                 outformat_d = 0;
+#endif
             } else if (!strcasecmp(optarg, "tree-rfc")) {
                 outformat_s = LYS_OUT_TREE;
                 outoptions_s |= LYS_OUTOPT_TREE_RFC;
                 outformat_d = 0;
-#endif
             } else if (!strcasecmp(optarg, "yin")) {
                 outformat_s = LYS_OUT_YIN;
                 outformat_d = 0;
