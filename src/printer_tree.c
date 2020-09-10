@@ -25,6 +25,7 @@
 #include "printer_internal.h"
 #include "tree.h"
 #include "tree_schema.h"
+#include "tree_schema_internal.h"
 
 /* module: <name>
  * <X>+--rw <node-name> */
@@ -56,9 +57,17 @@ struct tree_ctx {
 /*
  Abbreviations for functions:
 tree -> interface of tree printer
-trp  -> function whose parameter is from parsed tree
+trp  -> function whose parameters is from parsed tree
+trc  -> function whose parameters is from compiled tree
+trb  -> function whose parameters is from both forms of tree - parsed and compiled
 gen  -> parameter data types are simple or defined in this file
 */
+
+#if 0
+static int
+trc_sibling_is_valid_child(const struct lysc_node *node, int including, const struct lys_module *UNUSED(module),
+                            const struct lysc_node *aug_parent, uint16_t nodetype)
+#endif
 
 static int
 gen_print_indent(struct ly_out *out, uint8_t base_indent, uint64_t indent, int level)
@@ -80,12 +89,23 @@ gen_print_indent(struct ly_out *out, uint8_t base_indent, uint64_t indent, int l
 }
 
 static int
-trp_print_config(struct ly_out *out, int spec_config, uint16_t UNUSED(nodetype), uint16_t nodeflags)
+trc_print_config(struct ly_out *out, int spec_config, uint16_t nodetype, uint16_t nodeflags)
 {
     int ret;
 
     /* Skipped actions: */
-    /* for nodetype LYS_RPC, LYS_ACTION, LYS_NOTIF, LYS_USES, LYS_CASE */
+    /* for nodetype LYS_USES */
+    switch (nodetype) {
+    case LYS_RPC:
+    case LYS_ACTION:
+        return ly_print(out, "-x ");
+    case LYS_NOTIF:
+        return ly_print(out, "-n ");
+    case LYS_CASE:
+        return ly_print(out, ":(");
+    default:
+        break;
+    }
 
     if (spec_config == 1) {
         ret = ly_print_(out, "-w ");
@@ -97,13 +117,15 @@ trp_print_config(struct ly_out *out, int spec_config, uint16_t UNUSED(nodetype),
     }
 
     /* Skipped actions: */
-    /* if (nodetype == LYS_CHOICE) { */
+    if (nodetype == LYS_CHOICE) {
+        ret += ly_print(out, "(");
+    }
 
     return ret;
 }
 
 static int
-trp_print_prefix(struct ly_out *UNUSED(out), const struct lysp_node *UNUSED(node), struct tree_ctx *UNUSED(ctx))
+trc_print_prefix(struct ly_out *UNUSED(out), const struct lysc_node *UNUSED(node), struct tree_ctx *UNUSED(ctx))
 {
     uint16_t ret = 0;
 
@@ -115,52 +137,254 @@ trp_print_prefix(struct ly_out *UNUSED(out), const struct lysp_node *UNUSED(node
     return ret;
 }
 
+static int
+trc_print_node_opts(struct ly_out *out, const struct lysc_node *node, uint16_t mask)
+{
+    int node_len = 0;
+    /* print one-character opts */
+    switch (node->nodetype & mask) {
+    case LYS_LEAF:
+        /* Skipped condition: && !tree_leaf_is_mandatory(node) */
+        if (!(node->flags & LYS_MAND_TRUE)) {
+            node_len += ly_print_(out, "?");
+        }
+        break;
+    case LYS_ANYDATA:
+    case LYS_ANYXML:
+        if (!(node->flags & LYS_MAND_TRUE)) {
+            node_len += ly_print_(out, "?");
+        }
+        break;
+    case LYS_CONTAINER:
+        if(node->sp && (((struct lysp_node_container *)node->sp)->presence)) {
+            node_len += ly_print_(out, "!");
+        }
+        break;
+    case LYS_LIST:
+    case LYS_LEAFLIST:
+        node_len += ly_print_(out, "*");
+        break;
+    case LYS_CASE:
+        /* kinda shady, but consistent in a way */
+        node_len += ly_print_(out, ")");
+        break;
+    case LYS_CHOICE:
+        node_len += ly_print_(out, ")");
+        if (!(node->flags & LYS_MAND_TRUE)) {
+            node_len += ly_print(out, "?");
+        }
+        break;
+    default:
+        break;
+    }
+    return node_len;
+}
+
+
 static void
-trp_print_node(struct tree_ctx *ctx, const struct lysp_node *node, int level, int subtree)
+trc_next_indent(struct tree_ctx *ctx, const struct lysc_node *node, const struct lysc_node *UNUSED(aug_parent), int level)
+{
+    int next_is_case = 0, has_next = 0;
+
+    if (level > 64) {
+        LOGINT(node->module->ctx);
+        return;
+    }
+
+    /* clear level indent (it may have been set for some line wrapping) */
+    ctx->indent &= ~(uint64_t)(1ULL << (level - 1));
+
+    /* this is the direct child of a case */
+    if ((node->nodetype != LYS_CASE) && lysc_data_parent(node) && (lysc_data_parent(node)->nodetype & (LYS_CASE | LYS_CHOICE))) {
+        /* it is not the only child */
+        if (node->next && lysc_data_parent(node->next) && (lysc_data_parent(node->next)->nodetype == LYS_CHOICE)) {
+            next_is_case = 1;
+        }
+    }
+
+    /* next is a node that will actually be printed */
+    /* Skipped action... */
+    /* has_next = trc_sibling_is_valid_child(node, 0, ctx->module, aug_parent, node->nodetype); */
+    /* Changed to: */
+    has_next = node->next ? 1 : 0;
+
+    /* set level indent */
+    if (has_next && !next_is_case) {
+        ctx->indent |= (uint64_t)1ULL << (level - 1);
+    }
+}
+
+
+static int
+trc_print_node_typekeys(struct tree_ctx *ctx, const struct lysc_node *node, uint16_t mask, int level, int line_len, int node_len, uint16_t max_name_len)
+{
+    //struct ly_out *out = ctx->out;
+    //uint8_t text_indent, text_len;
+    //const char *text_str;
+    //switch (node->nodetype & mask) {
+    //case LYS_LEAF:
+    //case LYS_LEAFLIST:
+    //    assert(max_name_len);
+    //    text_indent = LY_TREE_TYPE_INDENT + (uint8_t)(max_name_len - node_len);
+    //    text_len = tree_print_type(out, &((struct lysc_node_leaf *)node)->type, ctx->options, &text_str);
+    //    line_len = tree_print_wrap(out, level, line_len, text_indent, text_len, ctx);
+    //    line_len += ly_print(out, text_str);
+    //    lydict_remove(ctx->module->ctx, text_str);
+    //    break;
+    //case LYS_ANYDATA:
+    //    assert(max_name_len);
+    //    text_indent = LY_TREE_TYPE_INDENT + (uint8_t)(max_name_len - node_len);
+    //    line_len = tree_print_wrap(out, level, line_len, text_indent, 7, ctx);
+    //    line_len += ly_print(out, "anydata");
+    //    break;
+    //case LYS_ANYXML:
+    //    assert(max_name_len);
+    //    text_indent = LY_TREE_TYPE_INDENT + (uint8_t)(max_name_len - node_len);
+    //    line_len = tree_print_wrap(out, level, line_len, text_indent, 6, ctx);
+    //    line_len += ly_print(out, "anyxml");
+    //    break;
+    //case LYS_LIST:
+    //    text_len = tree_print_keys(out, ((struct lysc_node_list *)node)->keys, ((struct lysc_node_list *)node)->keys_size,
+    //                               opts, &text_str);
+    //    if (text_len) {
+    //        line_len = tree_print_wrap(out, level, line_len, 1, text_len, opts);
+    //        line_len += ly_print(out, text_str);
+    //        lydict_remove(opts->module->ctx, text_str);
+    //    }
+    //    break;
+    //default:
+    //    break;
+    //}
+
+    return line_len;
+}
+
+static int
+trc_print_node_default(struct tree_ctx *ctx, const struct lysc_node *node, uint16_t mask, int level, int line_len)
+{
+    //struct ly_out *out = ctx->out;
+    //const char *text_str;
+    //struct lysc_node *sub;
+
+    //if (!(ctx->options & LYS_OUTOPT_TREE_RFC)) {
+    //    switch (node->nodetype & mask) {
+    //    case LYS_LEAF:
+    //        text_str = ((struct lysc_node_leaf *)node)->dflt->canonical;
+    //        if (text_str) {
+    //            line_len = tree_print_wrap(out, level, line_len, 1, 2 + strlen(text_str), ctx);
+    //            line_len += ly_print(out, "<%s>", text_str);
+    //        }
+    //        break;
+    //    case LYS_CHOICE:
+    //        sub = (struct lysc_node *) ((struct lysc_node_choice *)node)->dflt;
+    //        if (sub) {
+    //            line_len = tree_print_wrap(out, level, line_len, 1, 2 + strlen(sub->name), ctx);
+    //            line_len += ly_print(out, "<%s>", sub->name);
+    //        }
+    //        break;
+    //    default:
+    //        break;
+    //    }
+    //}
+
+    return line_len;
+}
+
+static int
+trc_print_node_iffeatures(struct tree_ctx *ctx, const struct lysc_node *node, uint16_t mask, int level, int line_len)
+{
+    //struct ly_out *out = ctx->out;
+    //uint8_t text_len = 0;
+    //const char *text_str;
+
+    //switch (node->nodetype & mask) {
+    //case LYS_CONTAINER:
+    //case LYS_LIST:
+    //case LYS_CHOICE:
+    //case LYS_CASE:
+    //case LYS_ANYDATA:
+    //case LYS_ANYXML:
+    //case LYS_LEAF:
+    //case LYS_LEAFLIST:
+    //case LYS_RPC:
+    //case LYS_ACTION:
+    //case LYS_NOTIF:
+    //case LYS_USES:
+    //    if (node->parent && (node->parent->nodetype == LYS_AUGMENT)) {
+    //        /* if-features from an augment are de facto inherited */
+    //        //text_len = tree_print_features(out, node->iffeatures, node->iffeature_size,
+    //        //                               node->parent->iffeature, node->parent->iffeature_size, opts, &text_str);
+    //    } else {
+    //        //text_len = tree_print_features(out, node->iffeature, node->iffeature_size, NULL, 0, opts, &text_str);
+    //    }
+    //    if (text_len) {
+    //        line_len = tree_print_wrap(out, level, line_len, 1, text_len, ctx);
+    //        line_len += ly_print(out, text_str);
+    //        lydict_remove(ctx->module->ctx, text_str);
+    //    }
+    //    break;
+    //default:
+    //    /* only grouping */
+    //    break;
+    //}
+
+    return line_len;
+}
+
+static void
+trc_print_data_node(struct tree_ctx *ctx, const struct lysc_node *node, const struct lysc_node *aug_parent, uint16_t mask, int level, int subtree, uint16_t max_name_len)
 {
     struct ly_out *out = ctx->out;
-    int line_len;
-    int node_len;
+    int line_len = 0;
+    int node_len = 0;
 
-    /* Skipped actions... */
     /* disabled/not printed node */
+    /* Skipped condition: (node->parent && node->parent->nodetype == LYS_AUGMENT) ? 1 : 0 */
+    if(lysc_node_is_disabled(node, 0) || !(node->nodetype & mask)) {
+        return;
+    }
+
     /* implicit input/output/case */
+    /* Skipped actions... */
+
     /* special uses and grouping handling */
+    /* Skipped actions... */
+    if(node->nodetype & LYS_ANYXML) {
+        if (!node->parent && !strcmp(node->name, "config") && !strcmp(node->module->name, "ietf-netconf")) {
+            /* node added by libyang, not actually in the model */
+            return;
+        }
+    }
 
     /* print indent */
     line_len = gen_print_indent(out, ctx->base_indent, ctx->indent, level);
     /* print status */
     line_len += ly_print_(out, "%s--", (node->flags & LYS_STATUS_DEPRC ? "x" : (node->flags & LYS_STATUS_OBSLT ? "o" : "+")));
-    /* print config flags (or special opening for case, choice) */
-    line_len += trp_print_config(out, ctx->spec_config, node->nodetype, node->flags);
+    ///* print config flags (or special opening for case, choice) */
+    line_len += trc_print_config(out, ctx->spec_config, node->nodetype, node->flags);
     /* print optionally prefix */
-    node_len = trp_print_prefix(out, node, ctx);
+    node_len = trc_print_prefix(out, node, ctx);
     /* print name */
     node_len += ly_print_(out, node->name);
 
     /* print one-character opts */
-    /* Skipped actions... */
-    /* switch (node->nodetype & mask) { */
-
+    node_len += trc_print_node_opts(out, node, mask);
     line_len += node_len;
 
     /* learn next level indent (there is never a sibling for subtree) */
     ++level;
     if (!subtree) {
-        // tree_next_indent(level, node, aug_parent, opts);
+        trc_next_indent(ctx, node, aug_parent, level);
     }
 
     /* print type/keys */
-    /* Skipped actions... */
-    /* switch (node->nodetype & mask) { */
+    line_len = trc_print_node_typekeys(ctx, node, mask, level, line_len, node_len, max_name_len);
 
     /* print default */
-    /* Skipped actions... */
-    /* if (!(opts->options & LYS_OUTOPT_TREE_RFC)) { */
+    line_len = trc_print_node_default(ctx, node, mask, level, line_len);
 
     /* print if-features */
-    /* Skipped actions... */
-    /* switch (node->nodetype & mask) { */
+    line_len = trc_print_node_iffeatures(ctx, node, mask, level, line_len);
 
     /* this node is finished printing */
     ly_print_(out, "\n");
@@ -189,24 +413,26 @@ trp_print_node(struct tree_ctx *ctx, const struct lysp_node *node, int level, in
 }
 
 static void
-trp_print_body(struct tree_ctx *ctx, const struct lysp_module *modp)
+trb_print_module_body(struct tree_ctx *ctx)
 {
-    struct lysp_node *node;
+    struct lysc_node *node;
 
     ctx->base_indent = LY_TREE_MOD_DATA_INDENT;
     // mask = LYS_CHOICE | LYS_CONTAINER | LYS_LEAF | LYS_LEAFLIST | LYS_LIST | LYS_ANYDATA | LYS_USES;
     // max_child_len = tree_get_max_name_len(data, NULL, mask, &opts);
 
-    LY_LIST_FOR(modp->data, node) {
+    /* LYS_RPC, LYS_NOTIF, LYS_GROUPING are skipped */
+    LY_LIST_FOR(ctx->module->compiled->data, node) {
         /* TODO: we're printing the submodule only? */
 
-        switch(node->nodetype) {
-            /* TODO: not ignore? */
-            case LYS_RPC: break;
-            case LYS_NOTIF: break;
-            case LYS_GROUPING: break;
-            default: 
-            trp_print_node(ctx, node, 0, 0);
+        //ly_print_(ctx->out, "name: %s\n", node->name);
+
+        uint16_t nodetype = node->nodetype;
+        if(nodetype & (LYS_RPC | LYS_NOTIF))
+            continue;
+        else {
+            uint16_t mask = LYS_CHOICE | LYS_CONTAINER | LYS_LEAF | LYS_LEAFLIST | LYS_LIST | LYS_ANYDATA;
+            trc_print_data_node(ctx, node, NULL, mask, 0, 0, 0);
         }
     }
 
@@ -227,19 +453,32 @@ trp_print_body(struct tree_ctx *ctx, const struct lysp_module *modp)
 
 }
 
-LY_ERR tree_print_parsed_module(struct ly_out *out, const struct lys_module *module, const struct lysp_module *modp, uint32_t options)
+static void
+trb_print_module_name(struct ly_out *out, const struct lys_module *module)
+{
+    /* TODO: printing 'submodule' keyword? */
+    /* Skipped actions... */
+
+    ly_print_(out, "module: %s\n", module->name);
+}
+
+
+LY_ERR tree_print_parsed_and_compiled_module(struct ly_out *out, const struct lys_module *module, uint32_t options)
 {
     struct tree_ctx ctx_ = {.out = out, .module = module, .base_indent = 0, .line_length = 0, .spec_config = 0, .options = options}, *ctx = &ctx_;
 
-    ly_print_(ctx->out, "Sorry, tree_print_parsed_module is not fully implemented\n");
+    ly_print_(ctx->out, "------Sorry, tree_print_parsed_module is not fully implemented------\n");
 
-    /* print module name */
-    ly_print_(ctx->out, "module: %s\n", ctx->module->name);
+    /* we are printing only a subtree */
+    /* Skipped actions... */
+    /* if (target_schema_path) { */
 
-    /* TODO: submodule? */
-    /* TODO: path? (target_schema_path) */
+    trb_print_module_name(out, module);
 
-    trp_print_body(ctx, modp);
+    /* TODO: print subtree by target_schema_path */
+    /* Skipped actions... */
+
+    trb_print_module_body(ctx);
 
     ly_print_flush(out);
     return LY_SUCCESS;
@@ -248,13 +487,87 @@ LY_ERR tree_print_parsed_module(struct ly_out *out, const struct lys_module *mod
 //LY_ERR tree_print_parsed_submodule(struct ly_out *out, const struct lys_module *module, const struct lysp_submodule *submodp, uint32_t options)
 LY_ERR tree_print_parsed_submodule(struct ly_out *out, const struct lys_module *UNUSED(module), const struct lysp_submodule *UNUSED(submodp), uint32_t UNUSED(options))
 {
-    ly_print_(out, "Sorry, tree_print_parsed_submodule not implemented yet\n");
+    ly_print_(out, "------Sorry, tree_print_parsed_submodule not implemented yet-----\n");
     return LY_SUCCESS;
 }
 
 //LY_ERR tree_print_compiled_node(struct ly_out *out, const struct lysc_node *node, uint32_t options)
 LY_ERR tree_print_compiled_node(struct ly_out *out, const struct lysc_node *UNUSED(node), uint32_t UNUSED(options))
 {
-    ly_print_(out, "Sorry, tree_print_compiled_node not implemented yet\n");
+    ly_print_(out, "-----Sorry, tree_print_compiled_node not implemented yet-----\n");
     return LY_SUCCESS;
 }
+
+#if 0
+static int
+trc_sibling_is_valid_child(const struct lysc_node *node, int including, const struct lys_module *UNUSED(module),
+                            const struct lysc_node *aug_parent, uint16_t nodetype)
+{
+    //struct lysc_node *cur, *cur2;
+    struct lysc_node *cur;
+
+    assert(!aug_parent || (aug_parent->nodetype == LYS_AUGMENT));
+
+    if (!node) {
+        return 0;
+    } else if (!lysc_data_parent(node) && !strcmp(node->name, "config") && !strcmp(node->module->name, "ietf-netconf")) {
+        /* node added by libyang, not actually in the model */
+        return 0;
+    }
+
+    /* has a following printed child */
+    const struct lysc_node *start = including ? node : node->next;
+    LYSC_TREE_DFS_BEGIN(start, cur) {
+        if (aug_parent && (cur->parent != aug_parent)) {
+            /* we are done traversing this augment, the nodes are all direct siblings */
+            return 0;
+        }
+
+        /* Skipped actions... */
+        /* if (module->type && (lys_main_module(module) != lys_node_module(cur))) { */
+
+        if (!lysc_node_is_disabled(cur, 0)) {
+            /* Skipped actions... */
+            /* if ((cur->nodetype == LYS_USES) || ((cur->nodetype == LYS_CASE) && (cur->flags & LYS_IMPLICIT))) { */
+            switch (nodetype) {
+            case LYS_GROUPING:
+                /* we are printing groupings, they are printed separately */
+                if (cur->nodetype == LYS_GROUPING) {
+                    return 0;
+                }
+                break;
+            case LYS_RPC:
+                if (cur->nodetype == LYS_RPC) {
+                    return 1;
+                }
+                break;
+            case LYS_NOTIF:
+                if (cur->nodetype == LYS_NOTIF) {
+                    return 1;
+                }
+                break;
+            default:
+                if (cur->nodetype & (LYS_CONTAINER | LYS_LEAF | LYS_LEAFLIST | LYS_LIST | LYS_ANYDATA | LYS_CHOICE
+                        | LYS_CASE | LYS_ACTION)) {
+                    return 1;
+                }
+
+                /* Skipped condition */
+                /* if ((cur->nodetype & (LYS_INPUT | LYS_OUTPUT)) && cur->child) { */
+
+                /* only nested notifications count here (not top-level) */
+                /* Skipped actions... */
+                /* if (cur->nodetype == LYS_NOTIF) { */
+                break;
+            }
+        }
+        LYSC_TREE_DFS_END(start, cur)
+    }
+
+    /* if in uses, the following printed child can actually be in the parent node :-/ */
+    /* Skipped actions... */
+    /* if (lysc_data_parent(node) && (lysc_data_parent(node)->nodetype == LYS_USES)) { */
+
+    return 0;
+}
+#endif

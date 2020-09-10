@@ -68,8 +68,12 @@ lys_print_module(struct ly_out *out, const struct lys_module *module, LYS_OUTFOR
             LOGERR(module->ctx, LY_EINVAL, "Module \"%s\" parsed module missing.", module->name);
             ret = LY_EINVAL;
             break;
+        } else if(!module->compiled) {
+            LOGERR(module->ctx, LY_EINVAL, "Module \"%s\" compiled module missing.", module->name);
+            ret = LY_EINVAL;
+            break;
         }
-        ret = tree_print_parsed_module(out, module, module->parsed, options);
+        ret = tree_print_parsed_and_compiled_module(out, module, options);
         break;
     /* TODO not yet implemented
     case LYS_OUT_INFO:
